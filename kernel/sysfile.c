@@ -378,7 +378,7 @@ sys_open(void)
     f->major = ip->major;
   } else {
     f->type = FD_INODE;
-    f->off = 0;
+    f->off = 0; //read & write offset initialized as 0.
   }
   f->ip = ip;
   f->readable = !(omode & O_WRONLY);

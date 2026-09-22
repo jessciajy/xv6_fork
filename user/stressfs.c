@@ -22,7 +22,15 @@ main(int argc, char *argv[])
 
   printf("stressfs starting\n");
   memset(data, 'a', sizeof(data));
-
+  // pid of the child proc is 0, because p->trapframe->a0 
+  // is set to 0 in forkret() within proc.c
+  // For proc0 (original proc), fork()>0 break
+  // for proc1 forked from proc0, i =0, fork()=0, so i=1
+  // Then fork() > 0, break.
+  // for proc2 forked from proc1, i=1, fork()=0, so i=2
+  // for proc3 forked from proc2, i=2, fork()=0, so i=3
+  // for proc4 forked from proc3, i=3, fork()=0, so i=4
+  // End
   for (i = 0; i < 4; i++)
     if (fork() > 0)
       break;

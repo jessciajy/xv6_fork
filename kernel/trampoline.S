@@ -34,6 +34,8 @@ uservec:
         # each process has a separate p->trapframe memory area,
         # but it's mapped to the same virtual address
         # (TRAPFRAME) in every process's user page table.
+        # before loading trapframe to a0, user a0 is 
+        # already saved in sscratch. 
         li a0, TRAPFRAME
         
         # save the user registers in TRAPFRAME
@@ -94,7 +96,8 @@ uservec:
         # flush now-stale user entries from the TLB.
         sfence.vma zero, zero
 
-        # call usertrap()
+        # call usertrap(), without the second sfence.vma,
+        # cannot find usertrap (0x8... in S) 
         jalr t0
 
 .globl userret
@@ -104,13 +107,20 @@ userret:
 
         # flush icache, in case this is the first time
         # we're running this proc on this hart.
+        # Otherwise, after switching to U, Icache aliase 
+        # happens (U instr has the same VA as a prev S instr)
         fence.i
 
         # switch to the user page table.
+        # Wait for 4 sd and 1 ld instrs in usertrap()
         sfence.vma zero, zero
+        # a0 is satp returned by usertrap()
         csrw satp, a0
+        # Flush the TLB which is inserted entries before
+        # csrw satp is execed.
         sfence.vma zero, zero
 
+        # without the second sfence.vma, cannot find TRAPFRAME
         li a0, TRAPFRAME
 
         # restore all but a0 from TRAPFRAME

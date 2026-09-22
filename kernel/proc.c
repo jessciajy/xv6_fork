@@ -5,6 +5,8 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "pstat.h"
+#include <stdlib.h>
 
 struct cpu cpus[NCPU];
 
@@ -12,11 +14,16 @@ struct proc proc[NPROC];
 
 struct proc *initproc;
 
+struct MLFQ * mlfq;
+
 int nextpid = 1;
 struct spinlock pid_lock;
 
 extern void forkret(void);
 static void freeproc(struct proc *p);
+
+void dequeue(struct proc * p, int priority);
+void enqueue(struct proc * p, int priority);
 
 extern char trampoline[]; // trampoline.S
 
@@ -25,6 +32,10 @@ extern char trampoline[]; // trampoline.S
 // memory model when using p->parent.
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
+
+const int timeslice[4] = {0, 32, 16, 8};
+const int timeslice_RR[4] = {64, 4, 2, 1};
+const int starve_time[4] = {640, 320, 160, 80};
 
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
@@ -53,9 +64,20 @@ procinit(void)
   initlock(&wait_lock, "wait_lock");
   for (p = proc; p < &proc[NPROC]; p++) {
     initlock(&p->lock, "proc");
+    p->next = NULL;
     p->state = UNUSED;
     p->kstack = KSTACK((int)(p - proc));
   }
+}
+
+void
+mlfqinit(void) {
+  mlfq = (struct MLFQ *)kalloc();
+  memset(mlfq, 0, sizeof(struct MLFQ));
+  initlock(&mlfq->lock, "mlfq");
+  for(int i = 0; i < 4; i++){
+    mlfq->prty_list[i] = 0;
+}
 }
 
 // Must be called with interrupts disabled,
@@ -82,6 +104,7 @@ mycpu(void)
 struct proc *
 myproc(void)
 {
+  // clock intr will call yiled, and cause context swtch.
   push_off();
   struct cpu *c = mycpu();
   struct proc *p = c->proc;
@@ -124,6 +147,15 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+
+  for (int prty = 0; prty < 4; prty++)
+  {
+    p->ticks[prty]=0;
+    p->wait_ticks[prty]=0;
+  }
+
+  p->priority = 3;
+  enqueue(p, 3);
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
@@ -168,6 +200,47 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  
+  dequeue(p, p->priority);
+  // p->priority = 0;
+}
+
+ void enqueue(struct proc * p, int priority){
+  acquire(&mlfq->lock);
+  struct proc * tmp = mlfq->prty_list[priority];
+  
+  if (tmp == NULL)
+  {
+    mlfq->prty_list[priority] = p;
+    p->next = NULL;
+    release (&mlfq->lock);
+    return;
+  }
+  while (tmp->next != NULL)
+  {
+    tmp = tmp->next;
+  }
+  tmp->next = p;
+  p->next = NULL;
+  release(&mlfq->lock);
+}
+
+void dequeue(struct proc *p, int priority) {
+  acquire(&mlfq->lock);
+  struct proc * tmp = mlfq->prty_list[priority];
+  if (tmp == p)
+  {
+    mlfq->prty_list[priority] = p->next;
+    p->next = NULL;
+    release (&mlfq->lock);
+
+    return;
+  }
+  while(tmp != NULL && tmp->next != p) 
+    tmp = tmp->next;
+  tmp->next = p->next;
+  p->next = NULL;
+  release(&mlfq->lock);
 }
 
 // Create a user page table for a given process, with no user memory,
@@ -428,9 +501,8 @@ kwait(uint64 addr)
 void
 scheduler(void)
 {
-  struct proc *p;
   struct cpu *c = mycpu();
-
+  
   c->proc = 0;
   for (;;) {
     // The most recent process to run may have had interrupts
@@ -438,30 +510,111 @@ scheduler(void)
     // processes are waiting. Then turn them back off
     // to avoid a possible race between an interrupt
     // and wfi.
+    // allow clockintr to increment ticks and wakeup the later ticks.
     intr_on();
     intr_off();
 
     int found = 0;
-    for (p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);
-      if (p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
+    struct proc * p = 0;
+    struct procpair tomove[NPROC];
+    int n = 0;
+    // int pstate = 0;
+    for (int prty = 3; prty >= 0; prty--) {   
+      acquire(&mlfq->lock);
+      struct proc * head = mlfq->prty_list[prty];
+      p = head;
+      while (p != NULL){
+        struct proc * nextp = p->next;
+        release(&mlfq->lock);
 
-        // Don't re-enable interrupts on release.
-        mycpu()->intena = 0;
-
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
-        found = 1;
+        acquire(&p->lock);
+        // pstate = p->state;
+        if (p->state == RUNNABLE && p->priority == prty) {
+          // Switch to chosen process.  It is the process's job
+          // to release its lock and then reacquire it
+          // before jumping back to us.
+          found = 1;
+          release(&p->lock);
+          acquire(&mlfq->lock);
+          break;
+        }
+        else if (p->state != RUNNABLE)
+          tomove[n++] = (struct procpair){.process = p, .priority = p->priority};
+        release(&p->lock);
+        p = nextp;
+        acquire(&mlfq->lock);
       }
+      release(&mlfq->lock);
+      if (found == 1)
+        break;
+    }
+    if (found == 1)
+    {
+      acquire(&p->lock);
+      if (p->state != RUNNABLE)
+      {
+        release(&p->lock);
+        continue;
+      }
+      p->state = RUNNING;
+      c->proc = p;
+      swtch(&c->context, &p->context);
+      // Don't re-enable interrupts on release.
+      // mycpu()->intena = 0;
+
+      // Process is done running for now.
+      // It should have changed its p->state before coming back.
+      c->proc = 0;
+      found = 1;
+      p->ticks[p->priority]++;
+
+      if (p->priority > 0 && p->ticks[p->priority] % timeslice[p->priority] == 0)
+      {
+        // degrade the process.
+        printk("pick pid=%d of prty=%d is degrading\n", p->pid, p->priority);
+        dequeue(p, p->priority--);
+        enqueue(p, p->priority);            
+      }
+
+      if (p->ticks[p->priority] % timeslice_RR[p->priority] == 0)
+      {
+        // move to the end
+        dequeue(p, p->priority);
+        enqueue(p, p->priority);  
+      }
+
+      release(&p->lock);
+      // if (p->state != pstate)
+      //   printk("pstate now is %d, pstate before is %d\n", p->state, pstate);
+    }
+
+    // for (int i = 0; i < n; i++) {
+    //   for (int j = 0; j < n; j++)
+    //     {
+    //       if (i != j && tomove[i].process==tomove[j].process)
+    //         panic("find bad tomove array\n");
+    //     }
+    // }
+    
+    // Handle move to end in a batch
+
+    for (int i = 0; i < n; i++) {
+      struct proc * p = tomove[i].process; 
+      // int prty = tomove[i].priority; 
+      acquire(&p->lock); 
+      if (p->pid == 0)
+      // freed proc
+      {
+        release(&p->lock);
+        printk("stuck at pid0\n");
+        continue;
+      }
+         
+      dequeue(p, p->priority);
+      enqueue(p, p->priority);
       release(&p->lock);
     }
+
     if (found == 0) {
       // nothing to run; stop running on this core until an interrupt.
       asm volatile("wfi");
@@ -503,6 +656,9 @@ yield(void)
   struct proc *p = myproc();
   acquire(&p->lock);
   p->state = RUNNABLE;
+  // after altering state, we must save registers, 
+  // so that when it is sleceted by scheduler next time,
+  // reg values cannot be loaded.
   sched();
   release(&p->lock);
 }
@@ -698,4 +854,49 @@ procdump(void)
     printk("%d %s %s", p->pid, state, p->name);
     printk("\n");
   }
+}
+
+
+int getprocinfo(struct pstat *pstat_table)
+{
+  int i = 0;
+  struct proc *p;
+  struct pstat tmp;
+  memset(&tmp, 0, sizeof(tmp));
+  for (p = proc; p < &proc[NPROC]; p++)
+  {
+    acquire(&p->lock);
+    if (p->state == UNUSED)
+    {
+      tmp.inuse[i] = 0;
+      tmp.pid[i] = 0;
+      tmp.priority[i] = 0;
+      tmp.states[i] = UNUSED;
+      for (int j = 0; j < 4; j++)
+      {
+        tmp.ticks[i][j]= 0;
+        tmp.wait_ticks[i][j] = 0;
+      }
+
+      release(&p->lock);
+      i++;
+      continue;
+    }
+    tmp.inuse[i] = 1;
+    tmp.pid[i] = p->pid;
+    tmp.states[i] = p->state;
+    for (int j = 0; j < 4; j++)
+    {
+      tmp.wait_ticks[i][j] = p->wait_ticks[j];
+      tmp.ticks[i][j] = p->ticks[j];
+    }
+    release(&p->lock);
+    i++;
+  }
+  int rc = copyout(myproc()->pagetable, PGSIZE, (uint64)pstat_table,
+        (char *)&tmp, sizeof(struct pstat));
+    if(rc <0) {
+        panic("copyout failed\n");
+    }
+  return 0;
 }

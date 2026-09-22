@@ -64,7 +64,6 @@ usertrap(void)
     // an interrupt will change sepc, scause, and sstatus,
     // so enable only now that we're done with those registers.
     intr_on();
-
     syscall();
   } else if ((which_dev = devintr()) != 0) {
     // ok
@@ -133,6 +132,8 @@ prepare_return(void)
 
 // interrupts and exceptions from kernel code go here via kernelvec,
 // on whatever the current kernel stack is.
+// when yield returns, kerneltrap returns, kernelvec will
+// load registers from sp stack.
 void
 kerneltrap()
 {
@@ -159,6 +160,9 @@ kerneltrap()
 
   // the yield() may have caused some traps to occur,
   // so restore trap registers for use by kernelvec.S's sepc instruction.
+  // yield will cause other procs to be run,
+  // which may modify spec and sstatus register.
+  // so we save the previous copy before yield to both regs.
   w_sepc(sepc);
   w_sstatus(sstatus);
 }

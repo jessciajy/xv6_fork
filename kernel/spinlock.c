@@ -21,7 +21,11 @@ initlock(struct spinlock *lk, char *name)
 void
 acquire(struct spinlock *lk)
 {
+  // clock interrupt will call yield, which acquires p->lock
   push_off(); // disable interrupts to avoid deadlock.
+  // the deadlock is that the proc interrupts is waiting for
+  // the lock (p->lock), but the current proc is waiting for the 
+  // interrupt to return. two procs on the same hart.
   if (holding(lk))
     panic("acquire");
 
@@ -71,7 +75,8 @@ release(struct spinlock *lk)
   // On RISC-V, this generates a fence instruction before the store:
   //   fence rw,w
   __atomic_store_n(&lk->locked, 0, __ATOMIC_RELEASE);
-
+// avoid deadlock, avoid proc interrupted by the other one,
+// the other one waits for the lock, the proc waits for the other one.
   pop_off();
 }
 
@@ -94,10 +99,13 @@ push_off(void)
 {
   // disable interrupts to prevent an involuntary context
   // switch while using mycpu().
+  // save sstatus to flags, set sstatus 1st bit to 0.
   uint64 flags = rc_sstatus(SSTATUS_SIE);
+  // flags & SIE is 2 if interrupt enabled.
   int old = !!(flags & SSTATUS_SIE);
 
   if (mycpu()->noff == 0)
+    // Remember the initial interrupt enable status.
     mycpu()->intena = old;
   mycpu()->noff += 1;
 }

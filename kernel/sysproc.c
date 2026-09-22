@@ -6,6 +6,8 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "vm.h"
+#include "pstat.h"
+#include <stdlib.h>
 
 uint64
 sys_exit(void)
@@ -80,6 +82,7 @@ sys_pause(void)
       release(&tickslock);
       return -1;
     }
+    // it saves the pointer. p->chan equals to the pointer ticks.
     sleep_prepare(&ticks);
     release(&tickslock);
     sleep();
@@ -109,4 +112,10 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+uint64 sys_getprocinfo(void){
+  struct pstat *p_stat;
+  argaddr(0, (uint64 *)&p_stat);
+  return getprocinfo(p_stat);
 }

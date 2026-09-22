@@ -23,8 +23,12 @@ acquiresleep(struct sleeplock *lk)
 {
   acquire(&lk->lk);
   while (lk->locked) {
+    // ensure wakeup(lk) will not miss waking up the proc
+    // because p->chan is not set to lk.
+    // because it is the only chance for the proc to be wakedup
     sleep_prepare(lk);
     release(&lk->lk);
+    // we can't occupy the lock to sleep
     sleep();
     acquire(&lk->lk);
   }
