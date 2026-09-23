@@ -551,51 +551,43 @@ scheduler(void)
     if (found == 1)
     {
       acquire(&p->lock);
-      if (p->state != RUNNABLE)
+      if (p->state == RUNNABLE)
       {
-        release(&p->lock);
-        continue;
+        // printk("pid=%d of prty=%d is picked\n", p->pid, p->priority);
+        p->state = RUNNING;
+        c->proc = p;
+        swtch(&c->context, &p->context);
+        // Don't re-enable interrupts on release.
+        // mycpu()->intena = 0;
+
+        // Process is done running for now.
+        // It should have changed its p->state before coming back.
+        c->proc = 0;
+        p->ticks[p->priority]++;
+
+        if (p->priority > 0 && p->ticks[p->priority] % timeslice[p->priority] == 0)
+        {
+          // degrade the process.
+          printk("pid=%d of prty=%d is degraded\n", p->pid, p->priority);
+          dequeue(p, p->priority--);
+          enqueue(p, p->priority);            
+        }
+
+        if (p->ticks[p->priority] % timeslice_RR[p->priority] == 0)
+        {
+          // move to the end
+          dequeue(p, p->priority);
+          enqueue(p, p->priority);  
+        }
       }
-      p->state = RUNNING;
-      c->proc = p;
-      swtch(&c->context, &p->context);
-      // Don't re-enable interrupts on release.
-      // mycpu()->intena = 0;
-
-      // Process is done running for now.
-      // It should have changed its p->state before coming back.
-      c->proc = 0;
-      found = 1;
-      p->ticks[p->priority]++;
-
-      if (p->priority > 0 && p->ticks[p->priority] % timeslice[p->priority] == 0)
-      {
-        // degrade the process.
-        printk("pick pid=%d of prty=%d is degrading\n", p->pid, p->priority);
-        dequeue(p, p->priority--);
-        enqueue(p, p->priority);            
+      else {
+        found = 0;
       }
-
-      if (p->ticks[p->priority] % timeslice_RR[p->priority] == 0)
-      {
-        // move to the end
-        dequeue(p, p->priority);
-        enqueue(p, p->priority);  
-      }
-
       release(&p->lock);
       // if (p->state != pstate)
       //   printk("pstate now is %d, pstate before is %d\n", p->state, pstate);
     }
 
-    // for (int i = 0; i < n; i++) {
-    //   for (int j = 0; j < n; j++)
-    //     {
-    //       if (i != j && tomove[i].process==tomove[j].process)
-    //         panic("find bad tomove array\n");
-    //     }
-    // }
-    
     // Handle move to end in a batch
 
     for (int i = 0; i < n; i++) {
@@ -606,18 +598,47 @@ scheduler(void)
       // freed proc
       {
         release(&p->lock);
-        printk("stuck at pid0\n");
         continue;
       }
-         
-      dequeue(p, p->priority);
-      enqueue(p, p->priority);
+
+      if (found == 0 && p->state==RUNNABLE)
+      {
+        //printk("pick pid=%d of prty=%d is degrading\n", p->pid, p->priority);
+        // printk("state changed to runnable pid %d\n", p->pid);
+        p->state = RUNNING;
+        c->proc = p;
+        swtch(&c->context, &p->context);
+        // Don't re-enable interrupts on release.
+        // mycpu()->intena = 0;
+
+        // Process is done running for now.
+        // It should have changed its p->state before coming back.
+        c->proc = 0;
+        found = 1;
+        p->ticks[p->priority]++;
+
+        if (p->priority > 0 && p->ticks[p->priority] % timeslice[p->priority] == 0)
+        {
+          // degrade the process.
+          
+          dequeue(p, p->priority--);
+          enqueue(p, p->priority);            
+        }
+
+        found = 1;
+      }
+      else {         
+        dequeue(p, p->priority);
+        enqueue(p, p->priority);
+      }
       release(&p->lock);
     }
 
     if (found == 0) {
       // nothing to run; stop running on this core until an interrupt.
+      intr_on();
       asm volatile("wfi");
+      intr_off();
     }
   }
 }

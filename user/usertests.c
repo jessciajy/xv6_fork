@@ -2938,6 +2938,8 @@ struct test {
   void (*f)(char *);
   char *s;
 } quicktests[] = {
+  {reparent, "reparent"},
+  {forkforkfork, "forkforkfork"},
   {copyin, "copyin"},
   {copyout, "copyout"},
   {copyinstr1, "copyinstr1"},
@@ -2960,10 +2962,8 @@ struct test {
   {killstatus, "killstatus"},
   {preempt, "preempt"},
   {exitwait, "exitwait"},
-  {reparent, "reparent"},
   {twochildren, "twochildren"},
   {forkfork, "forkfork"},
-  {forkforkfork, "forkforkfork"},
   {reparent2, "reparent2"},
   {mem, "mem"},
   {sharedfd, "sharedfd"},
@@ -2984,7 +2984,6 @@ struct test {
   {sbrkbasic, "sbrkbasic"},
   {sbrkmuch, "sbrkmuch"},
   {kernmem, "kernmem"},
-  {MAXVAplus, "MAXVAplus"},
   {sbrkfail, "sbrkfail"},
   {sbrkarg, "sbrkarg"},
   {validatetest, "validatetest"},
@@ -2994,17 +2993,18 @@ struct test {
   {stacktest, "stacktest"},
   {nowrite, "nowrite"},
   {pgbug, "pgbug"},
-  {sbrkbugs, "sbrkbugs"},
   {sbrklast, "sbrklast"},
   {sbrk8000, "sbrk8000"},
   {badarg, "badarg"},
   {lazy_alloc, "lazy_alloc"},
-  {lazy_unmap, "lazy_unmap"},
   {lazy_copy, "lazy_copy"},
   {lazy_copyinstr, "lazy_copyinstr"},
   {lazy_sbrk, "lazy_sbrk"},
   {partial_write, "partial_write"},
   {unlinkcwd, "unlinkcwd"},
+  {MAXVAplus, "MAXVAplus"},
+  {sbrkbugs, "sbrkbugs"},
+  {lazy_unmap, "lazy_unmap"},
   {0, 0},
 };
 

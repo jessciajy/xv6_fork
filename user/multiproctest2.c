@@ -40,6 +40,7 @@ int sleepload(int n, int t) {
     printf("XV6_SCHEDULER\t Sleep\n");
     pause(1);
   }
+  printf("XV6_SCHEDULER sleepload LOOP FINISHED! ready to exit\n");
   return i;
 }
 
