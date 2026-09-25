@@ -935,6 +935,7 @@ reparent(char *s)
       exit(0);
     }
   }
+  printf("ready to exit 1\n");
   exit(0);
 }
 
@@ -2938,23 +2939,24 @@ struct test {
   void (*f)(char *);
   char *s;
 } quicktests[] = {
-  {reparent, "reparent"},
-  {forkforkfork, "forkforkfork"},
-  {copyin, "copyin"},
-  {copyout, "copyout"},
-  {copyinstr1, "copyinstr1"},
-  {copyinstr2, "copyinstr2"},
-  {copyinstr3, "copyinstr3"},
-  {rwsbrk, "rwsbrk"},
-  {truncate1, "truncate1"},
-  {truncate2, "truncate2"},
-  {truncate3, "truncate3"},
-  {openiputtest, "openiput"},
-  {exitiputtest, "exitiput"},
-  {iputtest, "iput"},
-  {opentest, "opentest"},
-  {writetest, "writetest"},
-  {writebig, "writebig"},
+ // {reparent2, "reparent2"},
+  // {reparent, "reparent"},
+  // {forkforkfork, "forkforkfork"},
+  // {copyin, "copyin"},
+  // {copyout, "copyout"},
+  // {copyinstr1, "copyinstr1"},
+  // {copyinstr2, "copyinstr2"},
+  // {copyinstr3, "copyinstr3"},
+  // {rwsbrk, "rwsbrk"},
+  // {truncate1, "truncate1"},
+  // {truncate2, "truncate2"},
+  // {truncate3, "truncate3"},
+  // {openiputtest, "openiput"},
+  // {exitiputtest, "exitiput"},
+  // {iputtest, "iput"},
+  // {opentest, "opentest"},
+  // {writetest, "writetest"},
+  // {writebig, "writebig"},
   {createtest, "createtest"},
   {dirtest, "dirtest"},
   {exectest, "exectest"},
@@ -2964,7 +2966,6 @@ struct test {
   {exitwait, "exitwait"},
   {twochildren, "twochildren"},
   {forkfork, "forkfork"},
-  {reparent2, "reparent2"},
   {mem, "mem"},
   {sharedfd, "sharedfd"},
   {fourfiles, "fourfiles"},

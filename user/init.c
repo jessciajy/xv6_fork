@@ -48,6 +48,7 @@ main(void)
         exit(1);
       } else {
         // it was a parentless process; do nothing.
+        //printf("wpid is %d\n", wpid);
       }
     }
   }

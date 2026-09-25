@@ -22,7 +22,7 @@ struct spinlock pid_lock;
 extern void forkret(void);
 static void freeproc(struct proc *p);
 
-void dequeue(struct proc * p, int priority);
+struct proc * dequeue(struct proc * p, int priority);
 void enqueue(struct proc * p, int priority);
 
 extern char trampoline[]; // trampoline.S
@@ -225,7 +225,7 @@ freeproc(struct proc *p)
   release(&mlfq->lock);
 }
 
-void dequeue(struct proc *p, int priority) {
+struct proc * dequeue(struct proc *p, int priority) {
   acquire(&mlfq->lock);
   struct proc * tmp = mlfq->prty_list[priority];
   if (tmp == p)
@@ -234,13 +234,21 @@ void dequeue(struct proc *p, int priority) {
     p->next = NULL;
     release (&mlfq->lock);
 
-    return;
+    return p;
   }
-  while(tmp != NULL && tmp->next != p) 
+  int steps = 0;
+  while(tmp != NULL && tmp->next != p && steps < NPROC) 
     tmp = tmp->next;
+  if (tmp == NULL || steps == NPROC)
+  {
+    release(&mlfq->lock);
+    // printk("find / circle list\n");
+    return NULL;
+  }
   tmp->next = p->next;
   p->next = NULL;
   release(&mlfq->lock);
+  return p;
 }
 
 // Create a user page table for a given process, with no user memory,
@@ -337,7 +345,7 @@ kfork(void)
 
   // Allocate process.
   if ((np = allocproc()) == 0) {
-    return -1;
+        return -1;
   }
 
   // Copy user memory from parent to child.
@@ -421,6 +429,11 @@ kexit(int status)
 
   // Give any children to init.
   reparent(p);
+  acquire(&p->parent->lock);
+  dequeue(p->parent, p->parent->priority);
+  enqueue(p->parent, 3);
+  p->parent->priority = 3;
+  release(&p->parent->lock);
 
   // Parent might be sleeping in wait().
   wakeup(p->parent);
@@ -519,6 +532,7 @@ scheduler(void)
     struct procpair tomove[NPROC];
     int n = 0;
     // int pstate = 0;
+    struct proc * recordp = NULL;
     for (int prty = 3; prty >= 0; prty--) {   
       acquire(&mlfq->lock);
       struct proc * head = mlfq->prty_list[prty];
@@ -536,6 +550,7 @@ scheduler(void)
           found = 1;
           release(&p->lock);
           acquire(&mlfq->lock);
+          recordp = p;
           break;
         }
         else if (p->state != RUNNABLE)
@@ -553,61 +568,59 @@ scheduler(void)
       acquire(&p->lock);
       if (p->state == RUNNABLE)
       {
-        // printk("pid=%d of prty=%d is picked\n", p->pid, p->priority);
+        //printk("pid=%d of prty=%d is picked\n", p->pid, p->priority);
         p->state = RUNNING;
         c->proc = p;
         swtch(&c->context, &p->context);
         // Don't re-enable interrupts on release.
         // mycpu()->intena = 0;
-
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
         p->ticks[p->priority]++;
+        p->wait_ticks[p->priority] = 0;
 
         if (p->priority > 0 && p->ticks[p->priority] % timeslice[p->priority] == 0)
         {
           // degrade the process.
           printk("pid=%d of prty=%d is degraded\n", p->pid, p->priority);
-          dequeue(p, p->priority--);
-          enqueue(p, p->priority);            
+          p->wait_ticks[p->priority] = 0;
+          if (dequeue(p, p->priority--) != NULL)
+            enqueue(p, p->priority);            
         }
 
         if (p->ticks[p->priority] % timeslice_RR[p->priority] == 0)
         {
           // move to the end
-          dequeue(p, p->priority);
-          enqueue(p, p->priority);  
+          if (dequeue(p, p->priority) != NULL)
+            enqueue(p, p->priority);  
         }
       }
-      else {
-        found = 0;
-      }
       release(&p->lock);
+      found = 0;
       // if (p->state != pstate)
       //   printk("pstate now is %d, pstate before is %d\n", p->state, pstate);
     }
 
     // Handle move to end in a batch
-
+    struct proc * recordpp = NULL;
     for (int i = 0; i < n; i++) {
-      struct proc * p = tomove[i].process; 
+      struct proc * pp = tomove[i].process; 
       // int prty = tomove[i].priority; 
-      acquire(&p->lock); 
-      if (p->pid == 0)
-      // freed proc
+      acquire(&pp->lock); 
+      // if (pp->pid == 0)
+      // // freed proc
+      // {
+      //   release(&pp->lock);
+      //   continue;
+      // }
+      if (found == 0 && pp->state==RUNNABLE)
       {
-        release(&p->lock);
-        continue;
-      }
-
-      if (found == 0 && p->state==RUNNABLE)
-      {
-        //printk("pick pid=%d of prty=%d is degrading\n", p->pid, p->priority);
+        //printk("pid=%d of prty=%d is picked 1\n", pp->pid, pp->priority);
         // printk("state changed to runnable pid %d\n", p->pid);
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
+        pp->state = RUNNING;
+        c->proc = pp;
+        swtch(&c->context, &pp->context);
         // Don't re-enable interrupts on release.
         // mycpu()->intena = 0;
 
@@ -615,24 +628,73 @@ scheduler(void)
         // It should have changed its p->state before coming back.
         c->proc = 0;
         found = 1;
-        p->ticks[p->priority]++;
+        pp->ticks[p->priority]++;
 
-        if (p->priority > 0 && p->ticks[p->priority] % timeslice[p->priority] == 0)
+        if (pp->priority > 0 && pp->ticks[pp->priority] % timeslice[pp->priority] == 0)
         {
           // degrade the process.
           
-          dequeue(p, p->priority--);
-          enqueue(p, p->priority);            
+          if (dequeue(pp, pp->priority--) != NULL)
+            enqueue(pp, pp->priority);            
         }
 
         found = 1;
+        recordpp = pp;
       }
       else {         
-        dequeue(p, p->priority);
-        enqueue(p, p->priority);
+        if (dequeue(pp, pp->priority) != NULL)
+          enqueue(pp, pp->priority);
       }
-      release(&p->lock);
+      release(&pp->lock);
     }
+
+    // Handle starve.
+    struct proc *starveList[NPROC];
+    int starvecnt = 0;
+    for (int prty = 3; prty > 0; prty--)
+    {
+      acquire(&mlfq->lock);
+      struct proc * head = mlfq->prty_list[prty];
+      struct proc * waitp = head;
+      while(waitp != NULL) {
+        struct proc * nextwait = waitp->next;
+        release(&mlfq->lock);
+        acquire(&waitp->lock);
+        if (waitp != recordp && waitp != recordpp && waitp->state == RUNNABLE)
+        {
+            waitp->wait_ticks[prty]++;
+            if (waitp->wait_ticks[prty] == starve_time[prty])
+            {
+              // boost waitp, avoid changing list while iterating list
+              // save to array
+              starveList[starvecnt++] = waitp;
+            }
+        }
+        release(&waitp->lock);
+        waitp = nextwait;
+        acquire(&mlfq->lock);
+
+      }
+      release(&mlfq->lock);
+    }
+    if (starvecnt > 0)
+      printk("the starve process number is %d\n", starvecnt);
+    for (struct proc * waitp = starveList[0]; waitp < starveList[starvecnt]; waitp++)
+    {
+      // boost waitp
+      acquire(&waitp->lock);
+      if (waitp->pid == 0)
+        //freed proc
+      {
+        release(&waitp->lock);
+        continue;
+      }
+      waitp->wait_ticks[p->priority] = 0;
+      if (dequeue(waitp, waitp->priority++) != NULL)
+        enqueue(waitp, waitp->priority);
+      release(&waitp->lock);
+    }
+
 
     if (found == 0) {
       // nothing to run; stop running on this core until an interrupt.
