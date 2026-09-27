@@ -62,7 +62,7 @@ int main(int argc, char *argv[]) {
       if (i % 2 == 1) {
         t = 64 * 5;  // for this process, give up CPU for one time-slice
       }
-      sleepload(200, t);
+      sleepload(300, t);
       exit(0);
     } else {
       // setpri(c_pid, 2);
@@ -70,7 +70,7 @@ int main(int argc, char *argv[]) {
   }
 
   for (i = 0; i < 12; i++) {
-    pause(12);
+    pause(15);
     check(getprocinfo(&st) == 0, "getpinfo");
 
     for (j = 0; j < NPROC; j++) {
@@ -87,6 +87,9 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  for (i = 0; i < 6; i++) {
+    wait(0);
+  }
 
   // printf(1, "TEST PASSED");
 

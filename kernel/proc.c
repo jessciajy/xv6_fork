@@ -484,6 +484,7 @@ kwait(uint64 addr)
           freeproc(pp);
           release(&pp->lock);
           release(&wait_lock);
+          // printk("pid %d is freed by pid %d\n", pid, p->pid);
           return pid;
         }
         release(&pp->lock);
@@ -499,6 +500,7 @@ kwait(uint64 addr)
     // Wait for a child to exit.
     sleep_prepare(p); //DOC: wait-sleep
     release(&wait_lock);
+    // printk("pid %d all zombie children removed, go to sleep\n", p->pid);
     sleep();
     acquire(&wait_lock);
   }
@@ -537,7 +539,9 @@ scheduler(void)
       acquire(&mlfq->lock);
       struct proc * head = mlfq->prty_list[prty];
       p = head;
+
       while (p != NULL){
+        // bug is here.
         struct proc * nextp = p->next;
         release(&mlfq->lock);
 
@@ -573,7 +577,7 @@ scheduler(void)
         c->proc = p;
         swtch(&c->context, &p->context);
         // Don't re-enable interrupts on release.
-        // mycpu()->intena = 0;
+        mycpu()->intena = 0;
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
@@ -622,13 +626,13 @@ scheduler(void)
         c->proc = pp;
         swtch(&c->context, &pp->context);
         // Don't re-enable interrupts on release.
-        // mycpu()->intena = 0;
+        mycpu()->intena = 0;
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
         found = 1;
-        pp->ticks[p->priority]++;
+        pp->ticks[pp->priority]++;
 
         if (pp->priority > 0 && pp->ticks[pp->priority] % timeslice[pp->priority] == 0)
         {

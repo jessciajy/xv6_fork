@@ -134,9 +134,11 @@ runcmd(struct cmd *cmd)
 int
 getcmd(char *buf, int nbuf)
 {
+  // printf("ENTER getcmd\n");
   write(2, "$ ", 2);
   memset(buf, 0, nbuf);
   gets(buf, nbuf);
+  // printf("FINISH GETS\n");
   if (buf[0] == 0) // EOF
     return -1;
   return 0;
