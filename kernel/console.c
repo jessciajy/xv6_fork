@@ -98,6 +98,7 @@ consoleread(int user_dst, uint64 dst, int n)
     // input into cons.buffer.
     while (cons.r == cons.w) {
       if (killed(myproc())) {
+        //printk("killed myproc\n");
         release(&cons.lock);
         return -1;
       }

@@ -1,4 +1,6 @@
 // clang-format off
+#include "memlayout.h"
+
 struct buf;
 struct context;
 struct file;
@@ -10,6 +12,11 @@ struct sleeplock;
 struct stat;
 struct superblock;
 struct pstat;
+
+#define PTE_COW (1L << 8)
+
+extern int ref_counter[MAX_PAGES];
+extern struct spinlock ref_lock;
 
 // bio.c
 void            binit(void);

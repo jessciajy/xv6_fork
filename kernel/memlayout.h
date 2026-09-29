@@ -60,4 +60,7 @@
 //   ...
 //   TRAPFRAME (p->trapframe, used by the trampoline)
 //   TRAMPOLINE (the same page as in the kernel)
+
 #define TRAPFRAME (TRAMPOLINE - PGSIZE)
+#define MAX_PAGES  (PHYSTOP >> 12)
+#define P2IDX(a) (((uint64)(a)) - KERNBASE)

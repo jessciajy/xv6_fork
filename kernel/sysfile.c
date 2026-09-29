@@ -75,7 +75,10 @@ sys_read(void)
   argaddr(1, &p);
   argint(2, &n);
   if (argfd(0, 0, &f) < 0)
+  {
+    printk("argfd bug\n");
     return -1;
+  }
   return fileread(f, p, n);
 }
 

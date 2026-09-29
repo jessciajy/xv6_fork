@@ -301,7 +301,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for (i = 0; i < sz; i += PGSIZE) {
     if ((pte = walk(old, i, 0)) == 0)
@@ -310,11 +309,17 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       continue; // physical page hasn't been allocated
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if ((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char *)pa, PGSIZE);
-    if (mappages(new, i, PGSIZE, (uint64)mem, flags) != 0) {
-      kfree(mem);
+    // if ((mem = kalloc()) == 0)
+    //   goto err;
+    // memmove(mem, (char *)pa, PGSIZE);
+    // flags &= ~ PTE_W; //disable write for child process
+    *pte &= ~PTE_W; // disable write for the original process.
+    *pte |= PTE_COW;
+    acquire(&ref_lock);
+    ref_counter[(P2IDX(pa)>>12)]++;
+    release(&ref_lock);
+    flags = PTE_FLAGS(*pte); // pass the bit changes in current process to its child.
+    if (mappages(new, i, PGSIZE, (uint64)pa, flags) != 0) {
       goto err;
     }
   }
@@ -352,22 +357,47 @@ copyout(pagetable_t pagetable, uint64 psz, uint64 dstva, char *src, uint64 len)
     if (va0 >= MAXVA)
       return -1;
 
-    pa0 = walkaddr(pagetable, va0);
-    if (pa0 == 0) {
-      if ((pa0 = vmfault(pagetable, psz, va0, 0)) == 0) {
-        return -1;
-      }
-    }
+    // pa0 = walkaddr(pagetable, va0);
+    // if (pa0 == 0) {
+    //   if ((pa0 = vmfault(pagetable, psz, va0, 0)) == 0) {
+    //     return -1;
+    //   }
+    // }
 
     pte = walk(pagetable, va0, 0);
+
+    if (pte ==0 || (*pte & PTE_U) == 0 || (*pte & PTE_V) == 0)
+      return -1;
+
+    if ((*pte & PTE_COW) != 0)
+    {
+      uint flags = PTE_FLAGS(*pte);
+      flags |= PTE_W;
+      flags &= ~PTE_COW;
+      uint64 pa = PTE2PA(*pte);
+      if(pa == 0) return -1;
+      char * new_pa = kalloc();
+      if (new_pa == 0)  return -1;
+      memmove(new_pa, (char*)pa, PGSIZE);
+      *pte = PA2PTE(new_pa) | flags;
+      kfree((char*)pa);
+    } 
+
     // forbid copyout over read-only user text pages.
     if ((*pte & PTE_W) == 0)
+      return -1;
+    // very important, otherwise second memmove will copy the variable
+    // from source to the parent PA. The change will be reflected next time
+    // copyout is called, by first memmove from parent to child.
+    pa0 = walkaddr(pagetable, va0);
+    
+    if(pa0 == 0)
       return -1;
 
     n = PGSIZE - (dstva - va0);
     if (n > len)
       n = len;
-    memmove((void *)(pa0 + (dstva - va0)), src, n);
+    memmove((void *)(pa0) + (dstva - va0), src, n);
 
     len -= n;
     src += n;

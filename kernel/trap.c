@@ -67,10 +67,57 @@ usertrap(void)
     syscall();
   } else if ((which_dev = devintr()) != 0) {
     // ok
-  } else if ((r_scause() == 15 || r_scause() == 13) &&
-             vmfault(p->pagetable, p->sz, r_stval(),
-                     (r_scause() == 13) ? 1 : 0) != 0) {
+  } else if (r_scause() == 15) {
     // page fault on lazily-allocated page
+     pagetable_t my_pagetable =p->pagetable;
+
+    // virtual address error handling
+    if (r_stval()>=MAXVA){
+      p->killed = 1;
+      kexit(-1);
+    }
+
+    // get pte from virtual address: r_stval()
+    pte_t *my_pte = walk(my_pagetable, r_stval(), 0);
+
+    // and the physical page
+    uint64 pa = PTE2PA(*my_pte);
+      
+    // if it is a COW page and more than 1 processes point to it
+    if ((*my_pte&PTE_COW)&&ref_counter[(pa>>12)]!=1){
+        
+      char *new_pa;
+
+      // new page flag
+      uint flags = PTE_FLAGS(*my_pte);
+      flags |= PTE_W; // writeable flag 1
+      flags &= ~PTE_COW; // COW flag 0
+
+      if((new_pa = kalloc()) == 0){
+        // no available memory so exit
+        p->killed=1;
+        kexit(-1);
+      }
+
+      // copy old page to the new
+      memmove(new_pa, (char*)pa, PGSIZE);
+
+      // new page to a pte
+      *my_pte = PA2PTE(new_pa) | flags;
+        
+      kfree((char*)pa); // decrease the counter or delete teh apge accordingly
+      
+      p->trapframe->epc = r_sepc(); // restart the instruction
+      
+    }
+    else if ((*my_pte&PTE_COW)&&ref_counter[pa>>12]==1){
+      // if it is a cow page with only one reference to it
+
+      *my_pte &= ~PTE_COW; // set cow flag to 0
+      *my_pte |= PTE_W; // writeable flag to 1
+
+      p->trapframe->epc = r_sepc(); // restart the instruction
+    }
   } else {
     printk("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
     printk("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());

@@ -23,6 +23,10 @@ struct {
   struct run *freelist;
 } kmem;
 
+
+int ref_counter[MAX_PAGES]; // reference_counters[ppn] = 引用计数
+struct spinlock ref_lock;
+
 void
 kinit()
 {
@@ -51,6 +55,16 @@ kfree(void *pa)
   if (((uint64)pa % PGSIZE) != 0 || (char *)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
+
+  acquire(&ref_lock);
+  ref_counter[(uint64)P2IDX(pa) >> 12]--;
+  if (ref_counter[(uint64)P2IDX(pa) >> 12] > 0)
+  {
+    release(&ref_lock);
+    return;
+  }
+  
+  release(&ref_lock);
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
 
@@ -77,6 +91,11 @@ kalloc(void)
   release(&kmem.lock);
 
   if (r)
+  {
+    acquire(&ref_lock);
+    ref_counter[(uint64)P2IDX(r) >> 12] = 1;
+    release(&ref_lock);
     memset((char *)r, 5, PGSIZE); // fill with junk
+  }
   return (void *)r;
 }

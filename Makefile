@@ -153,7 +153,7 @@ UPROGS=\
 	$U/_test\
 	$U/_multiproctest\
 	$U/_multiproctest2\
-	$U/_reparent
+	$U/_cowtests
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)
