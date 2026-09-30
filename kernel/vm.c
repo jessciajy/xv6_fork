@@ -375,7 +375,6 @@ copyout(pagetable_t pagetable, uint64 psz, uint64 dstva, char *src, uint64 len)
       flags |= PTE_W;
       flags &= ~PTE_COW;
       uint64 pa = PTE2PA(*pte);
-      if(pa == 0) return -1;
       char * new_pa = kalloc();
       if (new_pa == 0)  return -1;
       memmove(new_pa, (char*)pa, PGSIZE);

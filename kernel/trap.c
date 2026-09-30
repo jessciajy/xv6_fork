@@ -79,12 +79,15 @@ usertrap(void)
 
     // get pte from virtual address: r_stval()
     pte_t *my_pte = walk(my_pagetable, r_stval(), 0);
-
+  //   if(my_pte == 0 || ((*my_pte) & PTE_V) == 0){
+  //   p->killed = 1;
+  //   kexit(-1);
+  // }
     // and the physical page
     uint64 pa = PTE2PA(*my_pte);
-      
+    // printk("pa = %lx\n", pa);
     // if it is a COW page and more than 1 processes point to it
-    if ((*my_pte&PTE_COW)&&ref_counter[(pa>>12)]!=1){
+    if ((*my_pte&PTE_COW)&&ref_counter[(P2IDX(pa)>>12)]!=1){
         
       char *new_pa;
 
@@ -110,7 +113,7 @@ usertrap(void)
       p->trapframe->epc = r_sepc(); // restart the instruction
       
     }
-    else if ((*my_pte&PTE_COW)&&ref_counter[pa>>12]==1){
+    else if ((*my_pte&PTE_COW)&&ref_counter[P2IDX(pa)>>12]==1){
       // if it is a cow page with only one reference to it
 
       *my_pte &= ~PTE_COW; // set cow flag to 0
