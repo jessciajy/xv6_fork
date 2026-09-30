@@ -100,7 +100,7 @@ threetest()
 
   wait(0);
 
-  sleep(1);
+  pause(1);
 
   for(char *q = p; q < p + sz; q += 4096){
     if(*(int*)q != getpid()){
@@ -142,12 +142,12 @@ filetest()
       exit(-1);
     }
     if(pid == 0){
-      sleep(1);
+      pause(1);
       if(read(fds[0], buf, sizeof(i)) != sizeof(i)){
         printf("error: read failed\n");
         exit(1);
       }
-      sleep(1);
+      pause(1);
       int j = *(int*)buf;
       if(j != i){
         printf("error: read the wrong value\n");
