@@ -16,11 +16,17 @@ struct proc *initproc;
 
 struct MLFQ * mlfq;
 
+struct proc *reap_list;
+struct spinlock reap_lock;
+
 int nextpid = 1;
 struct spinlock pid_lock;
 
 extern void forkret(void);
 static void freeproc(struct proc *p);
+
+void add_to_reap(struct proc *p);
+void reap_proc_list(void);
 
 struct proc * dequeue(struct proc * p, int priority);
 void enqueue(struct proc * p, int priority);
@@ -62,6 +68,8 @@ procinit(void)
 
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
+  initlock(&reap_lock, "reap");
+  reap_list = 0;
   for (p = proc; p < &proc[NPROC]; p++) {
     initlock(&p->lock, "proc");
     p->next = NULL;
@@ -156,10 +164,14 @@ found:
 
   p->priority = 3;
   enqueue(p, 3);
+  p->refcount = 0;
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
-    freeproc(p);
+    if (p->refcount == 0)
+      add_to_reap(p);
+    else
+      p->can_free = 1;
     release(&p->lock);
     return 0;
   }
@@ -167,7 +179,10 @@ found:
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if (p->pagetable == 0) {
-    freeproc(p);
+    if (p->refcount == 0)
+      add_to_reap(p);
+    else
+      p->can_free = 1;
     release(&p->lock);
     return 0;
   }
@@ -187,6 +202,7 @@ found:
 static void
 freeproc(struct proc *p)
 {
+  dequeue(p, p->priority);
   if (p->trapframe)
     kfree((void *)p->trapframe);
   p->trapframe = 0;
@@ -200,9 +216,32 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
-  
-  dequeue(p, p->priority);
   // p->priority = 0;
+}
+
+void add_to_reap(struct proc *p)
+{
+  acquire(&reap_lock);
+  // 头插法
+  p->next_reap = reap_list;
+  reap_list = p;
+  release(&reap_lock);
+}
+
+void reap_proc_list(void)
+{
+  acquire(&reap_lock);
+  struct proc *p = reap_list;
+  reap_list = 0; // 一次性把整个链表拿出来，减少持有锁时间
+  release(&reap_lock);
+
+  // 下面遍历，reap_lock已经释放
+  struct proc *curr;
+  for(curr = p; curr != 0; curr = curr->next_reap)
+  {
+    // freeproc内部会释放页表、kfree proc结构体
+    freeproc(curr);
+  }
 }
 
  void enqueue(struct proc * p, int priority){
@@ -350,7 +389,10 @@ kfork(void)
 
   // Copy user memory from parent to child.
   if (uvmcopy(p->pagetable, np->pagetable, p->sz) < 0) {
-    freeproc(np);
+    if (np->refcount == 0)
+      add_to_reap(np);
+    else
+      np->can_free = 1;
     release(&np->lock);
     return -1;
   }
@@ -481,7 +523,10 @@ kwait(uint64 addr)
             return -1;
           }
           pp->parent = 0;
-          freeproc(pp);
+          if (pp->refcount == 0)
+            add_to_reap(pp);
+          else
+            pp->can_free = 1;
           release(&pp->lock);
           release(&wait_lock);
           // printk("pid %d is freed by pid %d\n", pid, p->pid);
@@ -504,6 +549,24 @@ kwait(uint64 addr)
     sleep();
     acquire(&wait_lock);
   }
+}
+
+void incr_refcounter(struct proc * p)
+{
+  if (p == NULL)
+   return;
+  int dummy;
+  asm volatile("amoadd.w %0, %1, (%2)": "=&r"(dummy): "r"(1), "r"(&p->refcount): "memory");
+}
+
+void decr_refcounter(struct proc * p)
+{
+  if (p == NULL)
+    return;
+  int dummy;
+  asm volatile("amoadd.w %0, %1, (%2)": "=&r"(dummy): "r"(-1), "r"(&p->refcount): "memory");
+  if (p->refcount == 0 && p->can_free == 1)
+    add_to_reap(p);
 }
 
 // Per-CPU process scheduler.
@@ -539,12 +602,12 @@ scheduler(void)
       acquire(&mlfq->lock);
       struct proc * head = mlfq->prty_list[prty];
       p = head;
-
+      incr_refcounter(p);
       while (p != NULL){
         // bug is here.
+        //printk("p ref counter is %d\n", p->refcount);
         struct proc * nextp = p->next;
         release(&mlfq->lock);
-
         acquire(&p->lock);
         // pstate = p->state;
         if (p->state == RUNNABLE && p->priority == prty) {
@@ -560,10 +623,13 @@ scheduler(void)
         else if (p->state != RUNNABLE)
           tomove[n++] = (struct procpair){.process = p, .priority = p->priority};
         release(&p->lock);
+        decr_refcounter(p);
         p = nextp;
+        incr_refcounter(p);
         acquire(&mlfq->lock);
       }
       release(&mlfq->lock);
+      decr_refcounter(p);
       if (found == 1)
         break;
     }
@@ -699,6 +765,7 @@ scheduler(void)
       release(&waitp->lock);
     }
 
+    reap_proc_list();
 
     if (found == 0) {
       // nothing to run; stop running on this core until an interrupt.

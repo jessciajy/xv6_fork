@@ -105,6 +105,9 @@ struct proc {
   uint wait_ticks[4];
   int priority;
   struct proc *next;
+  struct proc *next_reap;
+  int refcount;
+  int can_free;
 };
 
 struct MLFQ {
@@ -116,3 +119,6 @@ struct procpair {
   struct proc * process;
   int priority;
 };
+
+extern struct proc *reap_list;
+extern struct spinlock reap_lock;
