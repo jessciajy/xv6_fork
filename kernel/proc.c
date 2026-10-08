@@ -31,6 +31,9 @@ void reap_proc_list(void);
 struct proc * dequeue(struct proc * p, int priority);
 void enqueue(struct proc * p, int priority);
 
+void incr_refcounter(struct proc * p);
+void decr_refcounter(struct proc * p);
+
 extern char trampoline[]; // trampoline.S
 
 // helps ensure that wakeups of wait()ing
@@ -164,7 +167,7 @@ found:
 
   p->priority = 3;
   enqueue(p, 3);
-  p->refcount = 0;
+  p->refcount = 1;
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
@@ -203,6 +206,7 @@ static void
 freeproc(struct proc *p)
 {
   dequeue(p, p->priority);
+  acquire(&mlfq->lock);
   if (p->trapframe)
     kfree((void *)p->trapframe);
   p->trapframe = 0;
@@ -217,6 +221,7 @@ freeproc(struct proc *p)
   p->xstate = 0;
   p->state = UNUSED;
   // p->priority = 0;
+  release(&mlfq->lock);
 }
 
 void add_to_reap(struct proc *p)
@@ -276,8 +281,10 @@ struct proc * dequeue(struct proc *p, int priority) {
     return p;
   }
   int steps = 0;
-  while(tmp != NULL && tmp->next != p && steps < NPROC) 
+  while(tmp != NULL && tmp->next != p && steps < NPROC) {
     tmp = tmp->next;
+    steps++;
+  }
   if (tmp == NULL || steps == NPROC)
   {
     release(&mlfq->lock);
@@ -485,6 +492,8 @@ kexit(int status)
   p->xstate = status;
   p->state = ZOMBIE;
 
+  decr_refcounter(p);
+
   release(&wait_lock);
 
   // Jump into the scheduler, never to return.
@@ -604,9 +613,9 @@ scheduler(void)
       p = head;
       incr_refcounter(p);
       while (p != NULL){
-        // bug is here.
-        //printk("p ref counter is %d\n", p->refcount);
+        
         struct proc * nextp = p->next;
+        incr_refcounter(nextp);
         release(&mlfq->lock);
         acquire(&p->lock);
         // pstate = p->state;
@@ -617,19 +626,19 @@ scheduler(void)
           found = 1;
           release(&p->lock);
           acquire(&mlfq->lock);
+          decr_refcounter(nextp);
           recordp = p;
           break;
         }
         else if (p->state != RUNNABLE)
           tomove[n++] = (struct procpair){.process = p, .priority = p->priority};
         release(&p->lock);
+        acquire(&mlfq->lock);
         decr_refcounter(p);
         p = nextp;
-        incr_refcounter(p);
-        acquire(&mlfq->lock);
       }
-      release(&mlfq->lock);
       decr_refcounter(p);
+      release(&mlfq->lock);
       if (found == 1)
         break;
     }
@@ -669,7 +678,6 @@ scheduler(void)
       release(&p->lock);
       found = 0;
       // if (p->state != pstate)
-      //   printk("pstate now is %d, pstate before is %d\n", p->state, pstate);
     }
 
     // Handle move to end in a batch
