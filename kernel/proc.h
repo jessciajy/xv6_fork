@@ -105,7 +105,6 @@ struct proc {
   uint wait_ticks[4];
   int priority;
   struct proc *next;
-  struct proc *next_reap;
   int refcount;
   int can_free;
 };

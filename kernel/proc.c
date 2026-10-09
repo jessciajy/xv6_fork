@@ -16,8 +16,6 @@ struct proc *initproc;
 
 struct MLFQ * mlfq;
 
-struct proc *reap_list;
-struct spinlock reap_lock;
 
 int nextpid = 1;
 struct spinlock pid_lock;
@@ -25,8 +23,6 @@ struct spinlock pid_lock;
 extern void forkret(void);
 static void freeproc(struct proc *p);
 
-void add_to_reap(struct proc *p);
-void reap_proc_list(void);
 
 struct proc * dequeue(struct proc * p, int priority);
 void enqueue(struct proc * p, int priority);
@@ -71,8 +67,6 @@ procinit(void)
 
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
-  initlock(&reap_lock, "reap");
-  reap_list = 0;
   for (p = proc; p < &proc[NPROC]; p++) {
     initlock(&p->lock, "proc");
     p->next = NULL;
@@ -173,7 +167,7 @@ found:
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
     if (p->refcount == 0)
-      add_to_reap(p);
+      freeproc(p);
     else
       p->can_free = 1;
     release(&p->lock);
@@ -184,7 +178,7 @@ found:
   p->pagetable = proc_pagetable(p);
   if (p->pagetable == 0) {
     if (p->refcount == 0)
-      add_to_reap(p);
+      freeproc(p);
     else
       p->can_free = 1;
     release(&p->lock);
@@ -222,35 +216,6 @@ freeproc(struct proc *p)
   p->state = UNUSED;
   p->next = 0;
   p->refcount = 0;
-}
-
-void add_to_reap(struct proc *p)
-{
-  acquire(&reap_lock);
-  // 头插法
-  p->next_reap = reap_list;
-  reap_list = p;
-  release(&reap_lock);
-}
-
-void reap_proc_list(void)
-{
-  acquire(&reap_lock);
-  struct proc *curr = reap_list;
-  reap_list = 0; // 一次性把整个链表拿出来，减少持有锁时间
-  release(&reap_lock);
-
-  // 下面遍历，reap_lock已经释放
-  while (curr != NULL)
-  {
-    struct proc *next = curr->next_reap;
-
-    acquire(&curr->lock);
-    freeproc(curr);
-    release(&curr->lock);
-
-    curr = next;
-  }
 }
 
  void enqueue(struct proc * p, int priority){
@@ -401,7 +366,7 @@ kfork(void)
   // Copy user memory from parent to child.
   if (uvmcopy(p->pagetable, np->pagetable, p->sz) < 0) {
     if (np->refcount == 0)
-      add_to_reap(np);
+      freeproc(np);
     else
       np->can_free = 1;
     release(&np->lock);
@@ -537,7 +502,7 @@ kwait(uint64 addr)
           }
           pp->parent = 0;
           if (pp->refcount == 0)
-            add_to_reap(pp);
+            freeproc(pp);
           else
             pp->can_free = 1;
           release(&pp->lock);
@@ -579,7 +544,7 @@ void decr_refcounter(struct proc * p)
   int dummy;
   asm volatile("amoadd.w %0, %1, (%2)": "=&r"(dummy): "r"(-1), "r"(&p->refcount): "memory");
   if (p->refcount == 0 && p->can_free == 1)
-    add_to_reap(p);
+    freeproc(p);
 }
 
 // Per-CPU process scheduler.
@@ -615,33 +580,32 @@ scheduler(void)
       acquire(&mlfq->lock);
       struct proc * head = mlfq->prty_list[prty];
       p = head;
-      incr_refcounter(p);
       while (p != NULL){
         
         struct proc * nextp = p->next;
-        incr_refcounter(nextp);
         release(&mlfq->lock);
         acquire(&p->lock);
+        incr_refcounter(p);
         // pstate = p->state;
         if (p->state == RUNNABLE && p->priority == prty) {
           // Switch to chosen process.  It is the process's job
           // to release its lock and then reacquire it
           // before jumping back to us.
           found = 1;
+          decr_refcounter(p);
           release(&p->lock);
           acquire(&mlfq->lock);
-          decr_refcounter(nextp);
+          
           recordp = p;
           break;
         }
         else if (p->state != RUNNABLE)
           tomove[n++] = (struct procpair){.process = p, .priority = p->priority};
+        decr_refcounter(p);
         release(&p->lock);
         acquire(&mlfq->lock);
-        decr_refcounter(p);
         p = nextp;
       }
-      decr_refcounter(p);
       release(&mlfq->lock);
       if (found == 1)
         break;
@@ -777,7 +741,6 @@ scheduler(void)
       release(&waitp->lock);
     }
 
-    reap_proc_list();
 
     if (found == 0) {
       // nothing to run; stop running on this core until an interrupt.
