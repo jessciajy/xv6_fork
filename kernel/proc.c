@@ -168,6 +168,7 @@ found:
   p->priority = 3;
   enqueue(p, 3);
   p->refcount = 1;
+  p->next = NULL;
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
@@ -206,7 +207,6 @@ static void
 freeproc(struct proc *p)
 {
   dequeue(p, p->priority);
-  acquire(&mlfq->lock);
   if (p->trapframe)
     kfree((void *)p->trapframe);
   p->trapframe = 0;
@@ -220,8 +220,8 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
-  // p->priority = 0;
-  release(&mlfq->lock);
+  p->next = 0;
+  p->refcount = 0;
 }
 
 void add_to_reap(struct proc *p)
@@ -236,16 +236,20 @@ void add_to_reap(struct proc *p)
 void reap_proc_list(void)
 {
   acquire(&reap_lock);
-  struct proc *p = reap_list;
+  struct proc *curr = reap_list;
   reap_list = 0; // 一次性把整个链表拿出来，减少持有锁时间
   release(&reap_lock);
 
   // 下面遍历，reap_lock已经释放
-  struct proc *curr;
-  for(curr = p; curr != 0; curr = curr->next_reap)
+  while (curr != NULL)
   {
-    // freeproc内部会释放页表、kfree proc结构体
+    struct proc *next = curr->next_reap;
+
+    acquire(&curr->lock);
     freeproc(curr);
+    release(&curr->lock);
+
+    curr = next;
   }
 }
 

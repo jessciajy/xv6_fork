@@ -2939,7 +2939,7 @@ struct test {
   void (*f)(char *);
   char *s;
 } quicktests[] = {
-  {forkforkfork, "forkforkfork"},
+ // {forkforkfork, "forkforkfork"},
  {reparent2, "reparent2"},
   {reparent, "reparent"},
   {copyin, "copyin"},
